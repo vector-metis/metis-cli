@@ -21,11 +21,6 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: Verify npm scope access
-        run: |
-          set -euo pipefail
-          npm whoami
-          npm org ls vector-metis >/dev/null
       - name: Build binaries and checksums
         env:
           VERSION: ${{ github.ref_name }}
