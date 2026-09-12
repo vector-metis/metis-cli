@@ -62,7 +62,7 @@ jobs:
             package_dir="npm/generated/${key}"
             mkdir -p "$package_dir"
             NPM_PACKAGE_NAME="$package" node npm/platform-package.mjs "$package_dir" "dist/${targets[$key]}" "$VERSION_NO_V" "$( [ "$key" = win32-x64 ] && echo metis.exe || echo metis )"
-            npm publish "$package_dir" --access public --provenance
+            npm publish "./$package_dir" --access public --provenance
           done
           npm pkg set version="$VERSION_NO_V" --prefix npm/cli
           npm pkg set optionalDependencies.@vector-metis/cli-linux-x64="$VERSION_NO_V" --prefix npm/cli
@@ -70,4 +70,4 @@ jobs:
           npm pkg set optionalDependencies.@vector-metis/cli-darwin-x64="$VERSION_NO_V" --prefix npm/cli
           npm pkg set optionalDependencies.@vector-metis/cli-darwin-arm64="$VERSION_NO_V" --prefix npm/cli
           npm pkg set optionalDependencies.@vector-metis/cli-win32-x64="$VERSION_NO_V" --prefix npm/cli
-          npm publish npm/cli --access public --provenance
+          npm publish ./npm/cli --access public --provenance
