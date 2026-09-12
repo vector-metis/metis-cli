@@ -1,0 +1,71 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Build binaries and checksums
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          while read -r os arch filename; do
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-X main.version=$VERSION" -o "dist/$filename" ./cmd/metis
+          done <<'TARGETS'
+          linux amd64 metis-linux-amd64
+          linux arm64 metis-linux-arm64
+          darwin amd64 metis-darwin-amd64
+          darwin arm64 metis-darwin-arm64
+          windows amd64 metis-windows-amd64.exe
+          TARGETS
+          sha256sum dist/* > dist/SHA256SUMS
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: gh release create "$VERSION" dist/* --title "Metis CLI $VERSION" --generate-notes
+      - name: Publish npm platform packages and launcher
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION_NO_V="${VERSION#v}"
+          declare -A targets=(
+            [linux-x64]=metis-linux-amd64
+            [linux-arm64]=metis-linux-arm64
+            [darwin-x64]=metis-darwin-amd64
+            [darwin-arm64]=metis-darwin-arm64
+            [win32-x64]=metis-windows-amd64.exe
+          )
+          for key in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64; do
+            package="@vector-metis/cli-${key}"
+            package_dir="npm/generated/${key}"
+            mkdir -p "$package_dir"
+            NPM_PACKAGE_NAME="$package" node npm/platform-package.mjs "$package_dir" "dist/${targets[$key]}" "$VERSION_NO_V" "$( [ "$key" = win32-x64 ] && echo metis.exe || echo metis )"
+            npm publish "$package_dir" --access public --provenance
+          done
+          npm pkg set version="$VERSION_NO_V" --prefix npm/cli
+          npm pkg set optionalDependencies.@vector-metis/cli-linux-x64="$VERSION_NO_V" --prefix npm/cli
+          npm pkg set optionalDependencies.@vector-metis/cli-linux-arm64="$VERSION_NO_V" --prefix npm/cli
+          npm pkg set optionalDependencies.@vector-metis/cli-darwin-x64="$VERSION_NO_V" --prefix npm/cli
+          npm pkg set optionalDependencies.@vector-metis/cli-darwin-arm64="$VERSION_NO_V" --prefix npm/cli
+          npm pkg set optionalDependencies.@vector-metis/cli-win32-x64="$VERSION_NO_V" --prefix npm/cli
+          npm publish npm/cli --access public --provenance

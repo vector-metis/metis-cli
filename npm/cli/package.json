@@ -1,0 +1,21 @@
+{
+  "name": "@vector-metis/cli",
+  "version": "0.1.0",
+  "description": "Metis application development CLI",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "bin": {
+    "metis": "bin/metis.js"
+  },
+  "files": ["bin"],
+  "optionalDependencies": {
+    "@vector-metis/cli-linux-x64": "0.1.0",
+    "@vector-metis/cli-linux-arm64": "0.1.0",
+    "@vector-metis/cli-darwin-x64": "0.1.0",
+    "@vector-metis/cli-darwin-arm64": "0.1.0",
+    "@vector-metis/cli-win32-x64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
