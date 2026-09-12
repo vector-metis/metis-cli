@@ -23,6 +23,8 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      - name: Upgrade npm for trusted publishing
+        run: npm install --global npm@11.6.2
       - name: Build binaries and checksums
         env:
           VERSION: ${{ github.ref_name }}
