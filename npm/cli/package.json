@@ -2,6 +2,10 @@
   "name": "@vector-metis/cli",
   "version": "0.1.1",
   "description": "Metis application development CLI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vector-metis/metis-cli.git"
+  },
   "license": "Apache-2.0",
   "type": "commonjs",
   "bin": {

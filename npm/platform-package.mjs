@@ -13,6 +13,10 @@ await writeFile(resolve(packageDir, "package.json"), JSON.stringify({
   name: process.env.NPM_PACKAGE_NAME,
   version,
   description: "Metis CLI platform binary",
+  repository: {
+    type: "git",
+    url: "https://github.com/vector-metis/metis-cli.git",
+  },
   license: "Apache-2.0",
   files: ["bin"],
   main: "index.js",
