@@ -13,6 +13,7 @@ jobs:
   release:
     if: github.ref_protected == true
     runs-on: ubuntu-latest
+    environment: npm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
