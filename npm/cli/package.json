@@ -1,6 +1,6 @@
 {
   "name": "@vector-metis/cli",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "description": "Metis application development CLI",
   "repository": {
     "type": "git",
@@ -11,7 +11,7 @@
   "bin": {
     "metis": "bin/metis.js"
   },
-  "files": ["bin"],
+  "files": ["bin", "README.md"],
   "optionalDependencies": {
     "@vector-metis/cli-linux-x64": "0.1.1",
     "@vector-metis/cli-linux-arm64": "0.1.1",

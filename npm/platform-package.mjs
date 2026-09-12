@@ -18,7 +18,8 @@ await writeFile(resolve(packageDir, "package.json"), JSON.stringify({
     url: "https://github.com/vector-metis/metis-cli.git",
   },
   license: "Apache-2.0",
-  files: ["bin"],
+  files: ["bin", "README.md"],
   main: "index.js",
 }, null, 2) + "\n");
 await writeFile(resolve(packageDir, "index.js"), `exports.bin = require("node:path").join(__dirname, "bin", ${JSON.stringify(binaryName)});\n`);
+await writeFile(resolve(packageDir, "README.md"), `# ${process.env.NPM_PACKAGE_NAME}\n\nMetis CLI 的 ${process.env.NPM_PACKAGE_NAME.replace("@vector-metis/cli-", "")} 原生平台包。请安装入口包 @vector-metis/cli 使用 metis 命令。\n\n安装：npm install --global @vector-metis/cli\n`);
