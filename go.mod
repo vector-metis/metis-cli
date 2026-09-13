@@ -4,10 +4,11 @@ go 1.25.0
 
 require (
 	github.com/spf13/cobra v1.10.2
-	github.com/vector-metis/metis-sdk-contracts v0.1.0
+	github.com/vector-metis/metis-sdk-contracts v0.1.1
 )
 
 require (
+	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
