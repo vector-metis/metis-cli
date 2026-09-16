@@ -23,6 +23,13 @@ func TestInitCreatesWorkspaceAndRefusesExistingContent(t *testing.T) {
 			t.Fatalf("init missing %s: %v", name, err)
 		}
 	}
+	compose, err := os.ReadFile(filepath.Join(target, "compose.amd64.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(compose), "restart: unless-stopped") {
+		t.Fatalf("generated compose = %q, want restart policy", compose)
+	}
 	command := NewCommand("test")
 	command.SetArgs([]string{"init", target})
 	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "必须为空") {
@@ -58,7 +65,7 @@ func TestPackValidateAndInspectShareContractRules(t *testing.T) {
 func TestValidateReportsStableGateRule(t *testing.T) {
 	workspace := validWorkspace(t)
 	composePath := filepath.Join(workspace, "compose.amd64.yaml")
-	if err := os.WriteFile(composePath, []byte("services:\n  web:\n    image: demo-a7x2m/web:1.0.0\n    ports: [\"8080:8080\"]\n"), 0o644); err != nil {
+	if err := os.WriteFile(composePath, []byte("services:\n  web:\n    image: demo-a7x2m/web:1.0.0\n    restart: unless-stopped\n    ports: [\"8080:8080\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	command := NewCommand("test")
@@ -123,7 +130,7 @@ func validWorkspace(t *testing.T) string {
 		}
 	}
 	write("manifest.yaml", "schema_version: 1\nid: demo-a7x2m\nversion: 1.0.0\ndisplay_name: Demo\ntype: web\narch: [amd64]\ndependencies: []\nservices:\n  web:\n    endpoints:\n      - {name: web, protocol: http, container_port: 8080}\n")
-	write("compose.amd64.yaml", "services:\n  web:\n    image: demo-a7x2m/web:1.0.0\n")
+	write("compose.amd64.yaml", "services:\n  web:\n    image: demo-a7x2m/web:1.0.0\n    restart: unless-stopped\n")
 	var image bytes.Buffer
 	writer := tar.NewWriter(&image)
 	writeArchiveEntry(t, writer, "config.json", `{"architecture":"amd64","os":"linux"}`)

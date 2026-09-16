@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	contract "github.com/vector-metis/metis-sdk-contracts"
 	"github.com/spf13/cobra"
+	contract "github.com/vector-metis/metis-sdk-contracts"
 )
 
 // NewCommand 创建新的命令树；每次测试都应调用本函数，避免 Cobra flag 状态串扰。
@@ -226,7 +226,7 @@ func initWorkspace(target, appID string, architectures []string, output io.Write
 		"about.md":      "# " + appID + "\n",
 	}
 	for _, architecture := range architectures {
-		files["compose."+architecture+".yaml"] = fmt.Sprintf("services:\n  web:\n    image: %s/web:0.1.0\n", appID)
+		files["compose."+architecture+".yaml"] = fmt.Sprintf("services:\n  web:\n    image: %s/web:0.1.0\n    restart: unless-stopped\n", appID)
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(target, name), []byte(content), 0o644); err != nil {
