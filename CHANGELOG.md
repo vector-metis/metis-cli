@@ -4,6 +4,11 @@
 
 - 未发布的改动记录在这里。
 
+## 0.1.8
+
+- 更新公开 `metis-sdk-contracts` 至 `v0.1.4`。
+- 校验并打包时拒绝 `${METIS_DIR_*}` 旧宿主目录占位符，并保留 overlay 空目录。
+
 ## 0.1.7
 
 - 更新公开 `metis-sdk-contracts` 至 `v0.1.3`，`metis validate` 与 `metis pack` 现在接受规范化的 `./overlay`、`./overlay/...` 挂载，并拒绝旧的 overlay source 与 `METIS_DIR_*` 规则。

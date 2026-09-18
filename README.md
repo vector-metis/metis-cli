@@ -33,7 +33,7 @@ services:
       - {source: ./overlay/static, target: /usr/share/nginx/html, read_only: true}
 ```
 
-`./config.yaml`、`./overlay/../config.yaml`、绝对路径和可写 overlay 挂载都会被 `validate`/`pack` 拒绝。旧包不会自动改写，修改后请重新打包。
+`./config.yaml`、`./overlay/../config.yaml`、绝对路径、可写 overlay 挂载和 `${METIS_DIR_*}` 旧宿主目录占位符都会被 `validate`/`pack` 拒绝。旧包不会自动改写，修改后请重新打包。
 
 ## 开发
 

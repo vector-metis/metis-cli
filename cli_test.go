@@ -127,6 +127,25 @@ func TestValidateEnforcesCanonicalOverlaySources(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsRemovedDirectoryPlaceholders(t *testing.T) {
+	workspace := validWorkspace(t)
+	manifestPath := filepath.Join(workspace, "manifest.yaml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest = bytes.Replace(manifest, []byte("  web:\n    endpoints:"), []byte("  web:\n    environment:\n      APP_CONFIG: {value: \"${METIS_DIR_CONFIG}/app.yaml\"}\n    endpoints:"), 1)
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	command := NewCommand("test")
+	command.SetArgs([]string{"validate", workspace})
+	err = command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "removed directory placeholder") {
+		t.Fatalf("validate error = %v, want removed directory placeholder rejection", err)
+	}
+}
+
 func TestPackRejectsOutputInsideSource(t *testing.T) {
 	workspace := validWorkspace(t)
 	command := NewCommand("test")
