@@ -3,6 +3,7 @@ package cli
 import (
 	"archive/tar"
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -72,6 +73,57 @@ func TestValidateReportsStableGateRule(t *testing.T) {
 	command.SetArgs([]string{"validate", workspace})
 	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "MPK-COMPOSE-PORTS") {
 		t.Fatalf("validate error = %v, want MPK-COMPOSE-PORTS", err)
+	}
+}
+
+func TestValidateEnforcesCanonicalOverlaySources(t *testing.T) {
+
+	tests := []struct {
+		name   string
+		source string
+		valid  bool
+	}{
+		{name: "file", source: "./overlay/config.yaml", valid: true},
+		{name: "directory", source: "./overlay/static", valid: true},
+		{name: "legacy file", source: "./config.yaml"},
+		{name: "parent escape", source: "./overlay/../config.yaml"},
+		{name: "non canonical", source: "./overlay//config.yaml"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := validWorkspace(t)
+			if err := os.MkdirAll(filepath.Join(workspace, "overlay", "static"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "overlay", "static", "index.html"), []byte("<main>ok</main>\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "overlay", "config.yaml"), []byte("enabled: true\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			manifestPath := filepath.Join(workspace, "manifest.yaml")
+			manifest, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mount := fmt.Sprintf("    mounts:\n      - {source: %s, target: /etc/app, read_only: true}\n", test.source)
+			manifest = bytes.Replace(manifest, []byte("  web:\n    endpoints:"), []byte("  web:\n"+mount+"    endpoints:"), 1)
+			if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			command := NewCommand("test")
+			command.SetArgs([]string{"validate", workspace})
+			err = command.Execute()
+			if test.valid {
+				if err != nil {
+					t.Fatalf("validate error = %v, want success", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "MPK-MANIFEST-MOUNT") {
+				t.Fatalf("validate error = %v, want MPK-MANIFEST-MOUNT", err)
+			}
+		})
 	}
 }
 

@@ -19,6 +19,22 @@ metis validate <工作目录或文件.mpk>
 metis inspect <工作目录或文件.mpk>
 ```
 
+## 应用目录与 Overlay
+
+应用运行时由平台为每个安装分配独立的 scope。Manifest 中的沙箱 source 使用固定的逻辑目录名：`program`、`config`、`data`、`log` 和 `tmp`；应用不需要知道 Worker 的宿主路径。
+
+包内的静态文件必须位于 `overlay/` 下，Manifest 挂载时只能使用规范化的相对 source：`./overlay` 或 `./overlay/...`。例如：
+
+```yaml
+services:
+  web:
+    mounts:
+      - {source: ./overlay/config.yaml, target: /etc/app/config.yaml, read_only: true}
+      - {source: ./overlay/static, target: /usr/share/nginx/html, read_only: true}
+```
+
+`./config.yaml`、`./overlay/../config.yaml`、绝对路径和可写 overlay 挂载都会被 `validate`/`pack` 拒绝。旧包不会自动改写，修改后请重新打包。
+
 ## 开发
 
 ```bash
