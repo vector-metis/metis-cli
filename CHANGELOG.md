@@ -4,6 +4,10 @@
 
 - 未发布的改动记录在这里。
 
+## 0.1.9
+
+- 更新公开 `metis-sdk-contracts` 至 `v0.1.5`，修复规范化 overlay source 在安装计划中重复添加 `./` 的问题。
+
 ## 0.1.8
 
 - 更新公开 `metis-sdk-contracts` 至 `v0.1.4`。
