@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- 未发布的改动记录在这里。
+- 同步 `metis-sdk-contracts v0.1.6`：支持 `source + subpath`、manifest lifecycle、overlay 文件/目录挂载和 image volume 门禁。
+- `metis inspect` 输出展开后的 manifest mounts 及镜像 volume 匹配事实。
+- `metis init` 生成 manifest lifecycle，源 Compose 不再写入 `restart` 或 `x-metis`。
 
 ## 0.1.9
 

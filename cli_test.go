@@ -3,7 +3,6 @@ package cli
 import (
 	"archive/tar"
 	"bytes"
-	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -24,12 +23,13 @@ func TestInitCreatesWorkspaceAndRefusesExistingContent(t *testing.T) {
 			t.Fatalf("init missing %s: %v", name, err)
 		}
 	}
-	compose, err := os.ReadFile(filepath.Join(target, "compose.amd64.yaml"))
-	if err != nil {
-		t.Fatal(err)
+	manifest, err := os.ReadFile(filepath.Join(target, "manifest.yaml"))
+	if err != nil || !strings.Contains(string(manifest), "lifecycle: {restart: unless-stopped}") {
+		t.Fatalf("generated manifest lifecycle = %q, err = %v", manifest, err)
 	}
-	if !strings.Contains(string(compose), "restart: unless-stopped") {
-		t.Fatalf("generated compose = %q, want restart policy", compose)
+	compose, err := os.ReadFile(filepath.Join(target, "compose.amd64.yaml"))
+	if err != nil || strings.Contains(string(compose), "restart:") {
+		t.Fatalf("generated source compose restart = %q, err = %v", compose, err)
 	}
 	command := NewCommand("test")
 	command.SetArgs([]string{"init", target})
@@ -45,7 +45,7 @@ func TestPackValidateAndInspectShareContractRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest = bytes.Replace(manifest, []byte("  web:\n    endpoints:"), []byte("  web:\n    capabilities:\n      compose-override: {}\n    endpoints:"), 1)
+	manifest = bytes.Replace(manifest, []byte("    lifecycle: {restart: unless-stopped}\n    endpoints:"), []byte("    lifecycle: {restart: unless-stopped}\n    capabilities:\n      compose-override: {}\n    endpoints:"), 1)
 	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,9 @@ func TestPackValidateAndInspectShareContractRules(t *testing.T) {
 		t.Fatalf("validate output = %q", output)
 	}
 	if output := execute(t, "inspect", packagePath); !strings.Contains(output, `"sha256"`) ||
-		!strings.Contains(output, `"displayName": "Demo"`) || !strings.Contains(output, `"compose-override"`) {
+		!strings.Contains(output, `"displayName": "Demo"`) || !strings.Contains(output, `"compose-override"`) ||
+		!strings.Contains(output, `"imageVolumeMatches"`) || !strings.Contains(output, `"matched": true`) ||
+		!strings.Contains(output, `"volumes": [`) {
 		t.Fatalf("inspect output = %q", output)
 	}
 }
@@ -66,7 +68,7 @@ func TestPackValidateAndInspectShareContractRules(t *testing.T) {
 func TestValidateReportsStableGateRule(t *testing.T) {
 	workspace := validWorkspace(t)
 	composePath := filepath.Join(workspace, "compose.amd64.yaml")
-	if err := os.WriteFile(composePath, []byte("services:\n  web:\n    image: demo-a7x2m/web:1.0.0\n    restart: unless-stopped\n    ports: [\"8080:8080\"]\n"), 0o644); err != nil {
+	if err := os.WriteFile(composePath, []byte("services:\n  web:\n    image: demo-a7x2m/web:1.0.0\n    ports: [\"8080:8080\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	command := NewCommand("test")
@@ -76,73 +78,30 @@ func TestValidateReportsStableGateRule(t *testing.T) {
 	}
 }
 
-func TestValidateEnforcesCanonicalOverlaySources(t *testing.T) {
-
-	tests := []struct {
-		name   string
-		source string
-		valid  bool
-	}{
-		{name: "file", source: "./overlay/config.yaml", valid: true},
-		{name: "directory", source: "./overlay/static", valid: true},
-		{name: "legacy file", source: "./config.yaml"},
-		{name: "parent escape", source: "./overlay/../config.yaml"},
-		{name: "non canonical", source: "./overlay//config.yaml"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			workspace := validWorkspace(t)
-			if err := os.MkdirAll(filepath.Join(workspace, "overlay", "static"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(workspace, "overlay", "static", "index.html"), []byte("<main>ok</main>\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(workspace, "overlay", "config.yaml"), []byte("enabled: true\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			manifestPath := filepath.Join(workspace, "manifest.yaml")
-			manifest, err := os.ReadFile(manifestPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			mount := fmt.Sprintf("    mounts:\n      - {source: %s, target: /etc/app, read_only: true}\n", test.source)
-			manifest = bytes.Replace(manifest, []byte("  web:\n    endpoints:"), []byte("  web:\n"+mount+"    endpoints:"), 1)
-			if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			command := NewCommand("test")
-			command.SetArgs([]string{"validate", workspace})
-			err = command.Execute()
-			if test.valid {
-				if err != nil {
-					t.Fatalf("validate error = %v, want success", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), "MPK-MANIFEST-MOUNT") {
-				t.Fatalf("validate error = %v, want MPK-MANIFEST-MOUNT", err)
-			}
-		})
-	}
-}
-
-func TestValidateRejectsRemovedDirectoryPlaceholders(t *testing.T) {
+func TestValidateAcceptsOverlayDirectoryMount(t *testing.T) {
 	workspace := validWorkspace(t)
 	manifestPath := filepath.Join(workspace, "manifest.yaml")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest = bytes.Replace(manifest, []byte("  web:\n    endpoints:"), []byte("  web:\n    environment:\n      APP_CONFIG: {value: \"${METIS_DIR_CONFIG}/app.yaml\"}\n    endpoints:"), 1)
+	manifest = bytes.Replace(manifest, []byte("  web:\n    endpoints:"), []byte("  web:\n    lifecycle: {restart: unless-stopped}\n    endpoints:"), 1)
+	manifest = bytes.Replace(manifest,
+		[]byte("      - {source: data, subpath: app, target: /var/lib/app}\n"),
+		[]byte("      - {source: data, subpath: app, target: /var/lib/app}\n      - {source: overlay, subpath: static, target: /usr/share/app, read_only: true}\n"), 1)
 	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "overlay", "static", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "overlay", "static", "nested", "index.html"), []byte("ok"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	command := NewCommand("test")
 	command.SetArgs([]string{"validate", workspace})
-	err = command.Execute()
-	if err == nil || !strings.Contains(err.Error(), "removed directory placeholder") {
-		t.Fatalf("validate error = %v, want removed directory placeholder rejection", err)
+	if err := command.Execute(); err != nil {
+		t.Fatalf("validate overlay directory error = %v", err)
 	}
 }
 
@@ -200,11 +159,11 @@ func validWorkspace(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	write("manifest.yaml", "schema_version: 1\nid: demo-a7x2m\nversion: 1.0.0\ndisplay_name: Demo\ntype: web\narch: [amd64]\ndependencies: []\nservices:\n  web:\n    endpoints:\n      - {name: web, protocol: http, container_port: 8080}\n")
-	write("compose.amd64.yaml", "services:\n  web:\n    image: demo-a7x2m/web:1.0.0\n    restart: unless-stopped\n")
+	write("manifest.yaml", "schema_version: 1\nid: demo-a7x2m\nversion: 1.0.0\ndisplay_name: Demo\ntype: web\narch: [amd64]\ndependencies: []\nservices:\n  web:\n    lifecycle: {restart: unless-stopped}\n    endpoints:\n      - {name: web, protocol: http, container_port: 8080}\n    mounts:\n      - {source: data, subpath: app, target: /var/lib/app}\n")
+	write("compose.amd64.yaml", "services:\n  web:\n    image: demo-a7x2m/web:1.0.0\n")
 	var image bytes.Buffer
 	writer := tar.NewWriter(&image)
-	writeArchiveEntry(t, writer, "config.json", `{"architecture":"amd64","os":"linux"}`)
+	writeArchiveEntry(t, writer, "config.json", `{"architecture":"amd64","os":"linux","config":{"Volumes":{"/var/lib/app":{}}}}`)
 	manifest := []byte(`[{"Config":"config.json","RepoTags":["demo-a7x2m/web:1.0.0"]}]`)
 	if err := writer.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0o644, Size: int64(len(manifest))}); err != nil {
 		t.Fatal(err)

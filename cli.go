@@ -16,6 +16,27 @@ import (
 	contract "github.com/vector-metis/metis-sdk-contracts"
 )
 
+// ManifestMountFact 是 inspect 输出的 manifest 挂载投影，便于开发者核对最终 scope 相对路径。
+type ManifestMountFact struct {
+	Service  string `json:"service"`
+	Source   string `json:"source"`
+	Subpath  string `json:"subpath,omitempty"`
+	Rendered string `json:"rendered"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"readOnly"`
+}
+
+// ImageVolumeMatch 是 inspect 输出的镜像声明 volume 与 manifest target 的匹配事实。
+type ImageVolumeMatch struct {
+	Architecture string `json:"architecture"`
+	Service      string `json:"service"`
+	Image        string `json:"image"`
+	Volume       string `json:"volume"`
+	Source       string `json:"source,omitempty"`
+	Subpath      string `json:"subpath,omitempty"`
+	Matched      bool   `json:"matched"`
+}
+
 // NewCommand 创建新的命令树；每次测试都应调用本函数，避免 Cobra flag 状态串扰。
 func NewCommand(version string) *cobra.Command {
 	root := &cobra.Command{
@@ -126,12 +147,14 @@ func newInspectCommand() *cobra.Command {
 			}
 			var images []contract.PackageImage
 			imageSummaries := map[string]*contract.ImageArchiveSummary{}
+			var imageVolumeMatches []ImageVolumeMatch
 			if !infoIsDirectory(args[0]) {
-				images, imageSummaries, err = inspectPackageImageFacts(args[0], summary.Manifest)
+				images, imageSummaries, imageVolumeMatches, err = inspectPackageImageFacts(args[0], summary.Manifest)
 				if err != nil {
 					return err
 				}
 			}
+			mounts := manifestMountFacts(summary.Manifest)
 			encoder := json.NewEncoder(command.OutOrStdout())
 			encoder.SetIndent("", "  ")
 			return encoder.Encode(struct {
@@ -141,7 +164,9 @@ func newInspectCommand() *cobra.Command {
 				FileCount      int                                      `json:"fileCount"`
 				Images         []contract.PackageImage                  `json:"images,omitempty"`
 				ImageSummaries map[string]*contract.ImageArchiveSummary `json:"imageSummaries,omitempty"`
-			}{summary.Manifest, summary.Size, summary.SHA256, summary.FileCount, images, imageSummaries})
+				Mounts         []ManifestMountFact                      `json:"mounts,omitempty"`
+				ImageVolumes   []ImageVolumeMatch                       `json:"imageVolumeMatches,omitempty"`
+			}{summary.Manifest, summary.Size, summary.SHA256, summary.FileCount, images, imageSummaries, mounts, imageVolumeMatches})
 		},
 	}
 	return command
@@ -152,41 +177,71 @@ func infoIsDirectory(input string) bool {
 	return err == nil && info.IsDir()
 }
 
-func inspectPackageImageFacts(input string, manifest contract.Manifest) ([]contract.PackageImage, map[string]*contract.ImageArchiveSummary, error) {
+func inspectPackageImageFacts(input string, manifest contract.Manifest) ([]contract.PackageImage, map[string]*contract.ImageArchiveSummary, []ImageVolumeMatch, error) {
 	file, err := os.Open(input)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer file.Close()
 	metadata, err := contract.InspectPackageMetadata(file, manifest.ID, manifest.Version)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	summaries := make(map[string]*contract.ImageArchiveSummary)
 	images, err := contract.InspectPackageImages(file, *metadata, func(archive contract.PackageImageArchive) (*contract.ImageArchiveSummary, error) {
-		temporary, createErr := os.CreateTemp("", "metis-inspect-image-*.tar")
-		if createErr != nil {
-			return nil, createErr
-		}
-		name := temporary.Name()
-		defer os.Remove(name)
-		if _, copyErr := io.Copy(temporary, archive.Body); copyErr != nil {
-			_ = temporary.Close()
-			return nil, copyErr
-		}
-		if _, seekErr := temporary.Seek(0, io.SeekStart); seekErr != nil {
-			_ = temporary.Close()
-			return nil, seekErr
-		}
-		summary, inspectErr := contract.InspectImageArchive(temporary)
-		closeErr := temporary.Close()
-		if inspectErr != nil || closeErr != nil {
-			return nil, errors.Join(inspectErr, closeErr)
+		summary, inspectErr := contract.InspectImageArchiveStream(archive.Body)
+		if inspectErr != nil {
+			return nil, inspectErr
 		}
 		summaries[archive.Path] = summary
 		return summary, nil
 	})
-	return images, summaries, err
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	volumeMatches, err := imageVolumeMatches(metadata, images, summaries)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return images, summaries, volumeMatches, nil
+}
+
+func manifestMountFacts(manifest contract.Manifest) []ManifestMountFact {
+	result := make([]ManifestMountFact, 0)
+	for serviceName, service := range manifest.Services {
+		for _, mount := range service.Mounts {
+			rendered := "./" + mount.Source
+			if mount.Subpath != "" {
+				rendered += "/" + mount.Subpath
+			}
+			result = append(result, ManifestMountFact{
+				Service: serviceName, Source: mount.Source, Subpath: mount.Subpath,
+				Rendered: rendered, Target: mount.Target, ReadOnly: mount.ReadOnly,
+			})
+		}
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].Service != result[right].Service {
+			return result[left].Service < result[right].Service
+		}
+		return result[left].Target < result[right].Target
+	})
+	return result
+}
+
+func imageVolumeMatches(metadata *contract.PackageMetadata, images []contract.PackageImage, summaries map[string]*contract.ImageArchiveSummary) ([]ImageVolumeMatch, error) {
+	bindings, err := contract.ImageVolumeBindings(*metadata, images, summaries)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ImageVolumeMatch, 0, len(bindings))
+	for _, binding := range bindings {
+		result = append(result, ImageVolumeMatch{
+			Architecture: binding.Architecture, Service: binding.Service, Image: binding.Image,
+			Volume: binding.Volume, Source: binding.Source, Subpath: binding.Subpath, Matched: true,
+		})
+	}
+	return result, nil
 }
 
 func initWorkspace(target, appID string, architectures []string, output io.Writer) error {
@@ -220,13 +275,13 @@ func initWorkspace(target, appID string, architectures []string, output io.Write
 		}
 	}
 	archYAML := strings.Join(architectures, ", ")
-	manifest := fmt.Sprintf("schema_version: 1\nid: %s\nversion: 0.1.0\ndisplay_name: %s\ndescription: \"\"\ntype: web\narch: [%s]\ndependencies: []\nservices:\n  web:\n    endpoints:\n      - {name: web, protocol: http, container_port: 8080}\n", appID, appID, archYAML)
+	manifest := fmt.Sprintf("schema_version: 1\nid: %s\nversion: 0.1.0\ndisplay_name: %s\ndescription: \"\"\ntype: web\narch: [%s]\ndependencies: []\nservices:\n  web:\n    lifecycle: {restart: unless-stopped}\n    endpoints:\n      - {name: web, protocol: http, container_port: 8080}\n", appID, appID, archYAML)
 	files := map[string]string{
 		"manifest.yaml": manifest,
 		"about.md":      "# " + appID + "\n",
 	}
 	for _, architecture := range architectures {
-		files["compose."+architecture+".yaml"] = fmt.Sprintf("services:\n  web:\n    image: %s/web:0.1.0\n    restart: unless-stopped\n", appID)
+		files["compose."+architecture+".yaml"] = fmt.Sprintf("services:\n  web:\n    image: %s/web:0.1.0\n", appID)
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(target, name), []byte(content), 0o644); err != nil {

@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/spf13/cobra v1.10.2
-	github.com/vector-metis/metis-sdk-contracts v0.1.5
+	github.com/vector-metis/metis-sdk-contracts v0.1.6
 )
 
 require (
