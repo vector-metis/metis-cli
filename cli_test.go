@@ -27,6 +27,9 @@ func TestInitCreatesWorkspaceAndRefusesExistingContent(t *testing.T) {
 	if err != nil || !strings.Contains(string(manifest), "lifecycle: {restart: unless-stopped}") {
 		t.Fatalf("generated manifest lifecycle = %q, err = %v", manifest, err)
 	}
+	if strings.Contains(string(manifest), "public_paths") {
+		t.Fatalf("generated manifest unexpectedly enables public access: %q", manifest)
+	}
 	compose, err := os.ReadFile(filepath.Join(target, "compose.amd64.yaml"))
 	if err != nil || strings.Contains(string(compose), "restart:") {
 		t.Fatalf("generated source compose restart = %q, err = %v", compose, err)
@@ -35,6 +38,45 @@ func TestInitCreatesWorkspaceAndRefusesExistingContent(t *testing.T) {
 	command.SetArgs([]string{"init", target})
 	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "必须为空") {
 		t.Fatalf("second init error = %v", err)
+	}
+}
+
+func TestPublicPathsUseSharedContractAcrossCommands(t *testing.T) {
+	workspace := validWorkspace(t)
+	manifestPath := filepath.Join(workspace, "manifest.yaml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest = bytes.Replace(manifest,
+		[]byte("      - {name: web, protocol: http, container_port: 8080}\n"),
+		[]byte("      - name: web\n        protocol: http\n        container_port: 8080\n        public_paths: [/public, /callbacks/provider-a]\n"), 1)
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	packagePath := filepath.Join(t.TempDir(), "public.mpk")
+	if output := execute(t, "pack", workspace, "-o", packagePath); !strings.Contains(output, packagePath) {
+		t.Fatalf("pack output = %q", output)
+	}
+	if output := execute(t, "validate", packagePath); !strings.Contains(output, "校验通过") {
+		t.Fatalf("validate output = %q", output)
+	}
+	output := execute(t, "inspect", packagePath)
+	if !strings.Contains(output, `"publicPaths": [`) ||
+		strings.Index(output, `"/callbacks/provider-a"`) > strings.Index(output, `"/public"`) {
+		t.Fatalf("inspect output does not contain normalized public paths: %q", output)
+	}
+
+	manifest = bytes.Replace(manifest,
+		[]byte("public_paths: [/public, /callbacks/provider-a]"),
+		[]byte("public_paths: [/public, /public/assets]"), 1)
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	command := NewCommand("test")
+	command.SetArgs([]string{"validate", workspace})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "MPK-MANIFEST-ENDPOINT") {
+		t.Fatalf("validate overlapping public paths error = %v", err)
 	}
 }
 

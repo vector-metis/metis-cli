@@ -45,6 +45,20 @@ services:
 `source: ./config.yaml`、绝对路径、`..` 路径、可写 overlay 挂载和 `${METIS_DIR_*}` 旧宿主目录占位符都会被
 `validate`/`pack` 拒绝。镜像声明的 volume target 也必须有 manifest 挂载绑定。旧包不会自动改写，修改后请重新打包。
 
+## Web 公开路径
+
+平台鉴权是默认和推荐方式，`metis init` 不生成公开路径。公开内容、回调或应用自行管理外部身份的页面可在唯一 HTTP endpoint 上显式声明：
+
+```yaml
+endpoints:
+  - name: web
+    protocol: http
+    container_port: 8080
+    public_paths: [/public, /callbacks/provider-a]
+```
+
+`validate` 和 `pack` 会拒绝相对路径、尾斜杠、点段、转义、重复或互相覆盖的声明；`inspect` 在 manifest 中显示规范排序后的值。`/` 表示整个入口无需平台登录与授权，不应作为省去授权配置的捷径。
+
 ## 开发
 
 ```bash

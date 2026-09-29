@@ -38,4 +38,8 @@ services:
 
 旧的完整路径 source、路径越界、绝对路径和可写 overlay 挂载会被校验拒绝；镜像声明的 volume target 必须有 manifest 绑定；CLI 不会自动改写旧包。
 
+## Web 公开路径
+
+平台鉴权是默认和推荐方式，`metis init` 不生成公开路径。公开内容、回调或应用自有外部身份页面可在唯一 HTTP endpoint 上声明 `public_paths: [/public]`。`validate`/`pack` 会拒绝非规范、重复或互相覆盖的路径；`inspect` 显示规范排序后的声明。`/` 表示整个入口公开，不应作为省去授权配置的捷径。
+
 Apache-2.0，见仓库中的 `LICENSE`。

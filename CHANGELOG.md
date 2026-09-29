@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.11
 
-- 同步 `metis-sdk-contracts v0.1.6`：支持 `source + subpath`、manifest lifecycle、overlay 文件/目录挂载和 image volume 门禁。
+- 同步公开路径契约：`validate`、`pack`、`inspect` 复用统一 `public_paths` 校验；`init` 继续默认使用平台鉴权。
+- 同步 `metis-sdk-contracts v0.1.7`：支持 `source + subpath`、manifest lifecycle、overlay 文件/目录挂载、image volume 门禁和 Web 公开路径契约。
 - `metis inspect` 输出展开后的 manifest mounts 及镜像 volume 匹配事实。
 - `metis init` 生成 manifest lifecycle，源 Compose 不再写入 `restart` 或 `x-metis`。
 
