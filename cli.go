@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -37,6 +38,57 @@ type ImageVolumeMatch struct {
 	Matched      bool   `json:"matched"`
 }
 
+// PreflightSetting is the safe setting projection used by CI reports.
+// Secret defaults are represented only by DefaultSet.
+type PreflightSetting struct {
+	Key          string `json:"key"`
+	Type         string `json:"type"`
+	Required     bool   `json:"required"`
+	DefaultSet   bool   `json:"defaultSet"`
+	DefaultValue string `json:"defaultValue,omitempty"`
+}
+
+// PreflightReport is a machine-readable package preflight report.
+type PreflightReport struct {
+	OK            bool               `json:"ok"`
+	ID            string             `json:"id"`
+	Version       string             `json:"version"`
+	SHA256        string             `json:"sha256"`
+	Size          int64              `json:"size"`
+	Architectures []string           `json:"architectures"`
+	Capabilities  []string           `json:"capabilities"`
+	ModelSlots    []string           `json:"modelSlots"`
+	Settings      []PreflightSetting `json:"settings"`
+	Checks        []string           `json:"checks"`
+}
+
+// SimulationSelection is one automatically selected or manually overridden resource.
+type SimulationSelection struct {
+	Mode  string `json:"mode"`
+	Value string `json:"value,omitempty"`
+}
+
+// SimulationSetting is a safe setting projection; secret values are redacted.
+type SimulationSetting struct {
+	Key    string `json:"key"`
+	Source string `json:"source"`
+	Value  string `json:"value,omitempty"`
+}
+
+// SimulationReport is a local install or upgrade plan for developer review.
+type SimulationReport struct {
+	Operation        string                         `json:"operation"`
+	AppID            string                         `json:"appId"`
+	Version          string                         `json:"version"`
+	Architecture     SimulationSelection            `json:"architecture"`
+	Node             SimulationSelection            `json:"node"`
+	Models           map[string]SimulationSelection `json:"models"`
+	SharedBuckets    []SimulationSelection          `json:"sharedBuckets"`
+	Settings         []SimulationSetting            `json:"settings"`
+	PreserveExisting bool                           `json:"preserveExistingSettings"`
+	PreflightChecks  []string                       `json:"preflightChecks"`
+}
+
 // NewCommand 创建新的命令树；每次测试都应调用本函数，避免 Cobra flag 状态串扰。
 func NewCommand(version string) *cobra.Command {
 	root := &cobra.Command{
@@ -48,7 +100,7 @@ func NewCommand(version string) *cobra.Command {
 	}
 	root.SetOut(os.Stdout)
 	root.SetErr(os.Stderr)
-	root.AddCommand(newInitCommand(), newPackCommand(), newValidateCommand(), newInspectCommand())
+	root.AddCommand(newInitCommand(), newPackCommand(), newValidateCommand(), newPreflightCommand(), newInspectCommand(), newSimulateCommand())
 	return root
 }
 
@@ -116,6 +168,280 @@ func newValidateCommand() *cobra.Command {
 		},
 	}
 	return command
+}
+
+func newPreflightCommand() *cobra.Command {
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "preflight <工作目录或 .mpk>",
+		Short: "在上传或安装前执行本地 manifest 预检",
+		Long:  "复用平台 MPK 门禁校验 settings 默认值、模型声明、Compose 和镜像事实；--json 输出可供 CI 使用的报告。平台资源可用性仍需由平台安装预检确认。",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			summary, cleanup, err := validatePath(args[0])
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if err != nil {
+				return err
+			}
+			report := makePreflightReport(*summary)
+			if asJSON {
+				encoder := json.NewEncoder(command.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(report)
+			}
+			if _, err = fmt.Fprintf(command.OutOrStdout(), "预检通过\t%s/%s\t%s\t%d bytes\n", report.ID, report.Version, report.SHA256, report.Size); err != nil {
+				return err
+			}
+			for _, setting := range report.Settings {
+				defaultState := "已声明"
+				if !setting.DefaultSet {
+					defaultState = "缺失"
+				}
+				if _, err = fmt.Fprintf(command.OutOrStdout(), "  setting %-24s default=%s required=%t\n", setting.Key, defaultState, setting.Required); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&asJSON, "json", false, "输出机器可读 JSON 报告")
+	return command
+}
+
+func makePreflightReport(summary contract.PackageSummary) PreflightReport {
+	settings := make([]PreflightSetting, 0, len(summary.Manifest.Settings))
+	for _, setting := range summary.Manifest.Settings {
+		item := PreflightSetting{Key: setting.Key, Type: setting.Type, Required: setting.Required, DefaultSet: setting.DefaultSet}
+		if setting.Type != "secret" {
+			item.DefaultValue = setting.Default
+		}
+		settings = append(settings, item)
+	}
+	return PreflightReport{
+		OK: true, ID: summary.Manifest.ID, Version: summary.Manifest.Version,
+		SHA256: summary.SHA256, Size: summary.Size,
+		Architectures: append([]string(nil), summary.Manifest.Architectures...),
+		Capabilities:  append([]string(nil), summary.Manifest.Capabilities...),
+		ModelSlots:    contract.ModelSlotsFromManifest(summary.Manifest), Settings: settings,
+		Checks: []string{"manifest schema 与身份", "settings default/type/options/range", "service、模型 slot、挂载和 Compose", "镜像归档与声明一致性"},
+	}
+}
+
+func newSimulateCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "simulate",
+		Short: "模拟应用安装或升级计划",
+		Long:  "读取工作目录或 MPK 并生成本地计划；节点、模型和共享存储默认标记为平台自动选择，资源可用性仍需由平台预检确认。",
+	}
+	command.AddCommand(newSimulationOperationCommand("install"), newSimulationOperationCommand("upgrade"))
+	return command
+}
+
+func newSimulationOperationCommand(operation string) *cobra.Command {
+	var architecture string
+	var nodeID int64
+	var modelOverrides []string
+	var settingOverrides []string
+	var sharedBuckets []string
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   operation + " <工作目录或 .mpk>",
+		Short: "模拟" + operationLabel(operation) + "计划",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			report, err := buildSimulationReport(args[0], operation, architecture, nodeID, modelOverrides, settingOverrides, sharedBuckets)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				encoder := json.NewEncoder(command.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(report)
+			}
+			return writeSimulationReport(command.OutOrStdout(), report)
+		},
+	}
+	command.Flags().StringVar(&architecture, "arch", "", "目标架构；省略时使用 manifest 的第一个架构")
+	command.Flags().Int64Var(&nodeID, "node-id", 0, "覆盖节点 ID；省略时由平台自动选择")
+	command.Flags().StringArrayVar(&modelOverrides, "model", nil, "覆盖模型 slot，格式为 slot=model，可重复")
+	command.Flags().StringArrayVar(&settingOverrides, "setting", nil, "覆盖 setting，格式为 key=value，可重复")
+	command.Flags().StringArrayVar(&sharedBuckets, "shared-bucket", nil, "覆盖共享桶标识，可重复；省略时由平台自动选择")
+	command.Flags().BoolVar(&asJSON, "json", false, "输出机器可读 JSON")
+	return command
+}
+
+func operationLabel(operation string) string {
+	if operation == "upgrade" {
+		return "升级"
+	}
+	return "安装"
+}
+
+func buildSimulationReport(input, operation, architecture string, nodeID int64, modelOverrides, settingOverrides, sharedBuckets []string) (SimulationReport, error) {
+	if operation != "install" && operation != "upgrade" {
+		return SimulationReport{}, fmt.Errorf("不支持的模拟操作 %q", operation)
+	}
+	summary, cleanup, err := validatePath(input)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return SimulationReport{}, err
+	}
+	if len(summary.Manifest.Architectures) == 0 {
+		return SimulationReport{}, errors.New("manifest.arch 不能为空")
+	}
+	if architecture == "" {
+		architecture = summary.Manifest.Architectures[0]
+	}
+	if !slices.Contains(summary.Manifest.Architectures, architecture) {
+		return SimulationReport{}, fmt.Errorf("架构 %q 不在 manifest.arch 中", architecture)
+	}
+	settings, err := parseSimulationSettings(summary.Manifest.Settings, settingOverrides)
+	if err != nil {
+		return SimulationReport{}, err
+	}
+	models, err := parseSimulationModels(summary.Manifest.Models, modelOverrides)
+	if err != nil {
+		return SimulationReport{}, err
+	}
+	buckets := make([]SimulationSelection, 0, len(sharedBuckets))
+	for _, value := range sharedBuckets {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return SimulationReport{}, errors.New("--shared-bucket 不能是空值")
+		}
+		buckets = append(buckets, SimulationSelection{Mode: "override", Value: value})
+	}
+	if len(buckets) == 0 {
+		buckets = []SimulationSelection{{Mode: "auto"}}
+	}
+	nodeSelection := SimulationSelection{Mode: "auto"}
+	if nodeID != 0 {
+		if nodeID < 0 {
+			return SimulationReport{}, errors.New("--node-id 必须大于 0")
+		}
+		nodeSelection = SimulationSelection{Mode: "override", Value: fmt.Sprintf("%d", nodeID)}
+	}
+	return SimulationReport{
+		Operation: operation, AppID: summary.Manifest.ID, Version: summary.Manifest.Version,
+		Architecture: SimulationSelection{Mode: "selected", Value: architecture}, Node: nodeSelection,
+		Models: models, SharedBuckets: buckets, Settings: settings,
+		PreserveExisting: operation == "upgrade", PreflightChecks: []string{
+			"manifest schema、settings default/type/options/range 已通过",
+			"service、模型 slot、挂载、Compose 和镜像事实已通过",
+		},
+	}, nil
+}
+
+func parseSimulationSettings(definitions []contract.Setting, overrides []string) ([]SimulationSetting, error) {
+	values := make(map[string]string, len(overrides))
+	for _, item := range overrides {
+		key, value, ok := strings.Cut(item, "=")
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("--setting 必须使用 key=value 格式：%q", item)
+		}
+		values[key] = value
+	}
+	if err := contract.ValidateSettings(definitions, values); err != nil {
+		return nil, err
+	}
+	result := make([]SimulationSetting, 0, len(definitions))
+	for _, definition := range definitions {
+		value, overridden := values[definition.Key]
+		source := "default"
+		if overridden {
+			source = "override"
+		} else {
+			value = definition.Default
+		}
+		if definition.Type == "secret" {
+			value = "[redacted]"
+		}
+		result = append(result, SimulationSetting{Key: definition.Key, Source: source, Value: value})
+	}
+	return result, nil
+}
+
+func parseSimulationModels(definitions map[string]contract.ModelSlot, overrides []string) (map[string]SimulationSelection, error) {
+	result := make(map[string]SimulationSelection, len(definitions))
+	for _, slot := range contract.ModelSlotsFromManifest(contract.Manifest{Models: definitions}) {
+		result[slot] = SimulationSelection{Mode: "auto"}
+	}
+	for _, item := range overrides {
+		slot, value, ok := strings.Cut(item, "=")
+		slot, value = strings.TrimSpace(slot), strings.TrimSpace(value)
+		if !ok || slot == "" || value == "" {
+			return nil, fmt.Errorf("--model 必须使用 slot=model 格式：%q", item)
+		}
+		if _, exists := definitions[slot]; !exists {
+			return nil, fmt.Errorf("模型 slot %q 未在 manifest.models 中声明", slot)
+		}
+		result[slot] = SimulationSelection{Mode: "override", Value: value}
+	}
+	return result, nil
+}
+
+func writeSimulationReport(output io.Writer, report SimulationReport) error {
+	if _, err := fmt.Fprintf(output, "模拟%s：%s/%s\n", operationLabel(report.Operation), report.AppID, report.Version); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(output, "架构：%s\n节点：%s\n", report.Architecture.Value, selectionText(report.Node)); err != nil {
+		return err
+	}
+	if len(report.Models) == 0 {
+		if _, err := fmt.Fprintln(output, "模型：无模型 slot"); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintln(output, "模型："); err != nil {
+			return err
+		}
+		for _, slot := range sortedSimulationKeys(report.Models) {
+			if _, err := fmt.Fprintf(output, "  %s：%s\n", slot, selectionText(report.Models[slot])); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := fmt.Fprintln(output, "共享存储："); err != nil {
+		return err
+	}
+	for _, bucket := range report.SharedBuckets {
+		if _, err := fmt.Fprintf(output, "  %s\n", selectionText(bucket)); err != nil {
+			return err
+		}
+	}
+	for _, setting := range report.Settings {
+		if _, err := fmt.Fprintf(output, "设置 %s：%s（%s）\n", setting.Key, setting.Value, setting.Source); err != nil {
+			return err
+		}
+	}
+	if report.PreserveExisting {
+		_, _ = fmt.Fprintln(output, "升级规则：同名 setting 保留现值，新增 setting 使用 manifest 默认值")
+	}
+	return nil
+}
+
+func selectionText(selection SimulationSelection) string {
+	if selection.Mode == "auto" {
+		return "平台自动选择"
+	}
+	if selection.Value == "" {
+		return selection.Mode
+	}
+	return selection.Value + "（手动覆盖）"
+}
+
+func sortedSimulationKeys(values map[string]SimulationSelection) []string {
+	result := make([]string, 0, len(values))
+	for key := range values {
+		result = append(result, key)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func newInspectCommand() *cobra.Command {
@@ -275,7 +601,7 @@ func initWorkspace(target, appID string, architectures []string, output io.Write
 		}
 	}
 	archYAML := strings.Join(architectures, ", ")
-	manifest := fmt.Sprintf("schema_version: 1\nid: %s\nversion: 0.1.0\ndisplay_name: %s\ndescription: \"\"\ntype: web\narch: [%s]\ndependencies: []\nservices:\n  web:\n    lifecycle: {restart: unless-stopped}\n    endpoints:\n      - {name: web, protocol: http, container_port: 8080}\n", appID, appID, archYAML)
+	manifest := fmt.Sprintf("schema_version: 1\nid: %s\nversion: 0.1.0\ndisplay_name: %s\ndescription: \"\"\ntype: web\narch: [%s]\ndependencies: []\nsettings: {}\nmodels: {}\nservices:\n  web:\n    lifecycle: {restart: unless-stopped}\n    endpoints:\n      - {name: web, protocol: http, container_port: 8080}\n", appID, appID, archYAML)
 	files := map[string]string{
 		"manifest.yaml": manifest,
 		"about.md":      "# " + appID + "\n",

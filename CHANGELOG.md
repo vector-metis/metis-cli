@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.12
+
+- 增加 `preflight`，在上传前执行 manifest 和 MPK 预检。
+- 增加 `simulate install` 与 `simulate upgrade`，展示平台自动选择和高级覆盖，并对 secret 脱敏。
+- `init` 生成显式的空 `settings` 和 `models` 段。
+
 ## 0.1.11
 
 - 同步公开路径契约：`validate`、`pack`、`inspect` 复用统一 `public_paths` 校验；`init` 继续默认使用平台鉴权。

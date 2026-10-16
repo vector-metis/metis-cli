@@ -1,6 +1,6 @@
 # @vector-metis/cli
 
-智办应用开发 CLI，用于初始化应用工作目录、校验包、打包 MPK 和检查包元数据。
+智办应用开发 CLI，用于初始化应用工作目录、校验包、打包 MPK、上传前预检、安装/升级模拟和检查包元数据。
 
 ## 安装
 
@@ -17,8 +17,13 @@ metis --version
 metis init [目录]
 metis pack <工作目录> --output <文件.mpk>
 metis validate <工作目录或文件.mpk>
+metis preflight <工作目录或文件.mpk> [--json]
+metis simulate install <工作目录或文件.mpk> [选项]
+metis simulate upgrade <工作目录或文件.mpk> [选项]
 metis inspect <工作目录或文件.mpk>
 ```
+
+`preflight --json` 可直接接入 CI。`simulate` 默认展示平台自动选择的架构、节点、模型和共享存储，并支持高级覆盖；secret 值始终脱敏。
 
 ## Manifest 挂载与 Overlay
 

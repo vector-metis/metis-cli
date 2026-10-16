@@ -106,6 +106,47 @@ func TestPackValidateAndInspectShareContractRules(t *testing.T) {
 	}
 }
 
+func TestPreflightJSONRedactsSecretDefaults(t *testing.T) {
+	workspace := validWorkspace(t)
+	manifestPath := filepath.Join(workspace, "manifest.yaml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest = bytes.Replace(manifest, []byte("dependencies: []\n"), []byte("dependencies: []\nsettings:\n  site-name: {label: Site, type: string, required: true, default: Demo}\n  token: {label: Token, type: secret, default: super-secret}\n"), 1)
+	manifest = bytes.Replace(manifest, []byte("    lifecycle: {restart: unless-stopped}\n"), []byte("    lifecycle: {restart: unless-stopped}\n    environment:\n      SITE_NAME: {setting: site-name}\n      TOKEN: {setting: token}\n"), 1)
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := execute(t, "preflight", workspace, "--json")
+	if !strings.Contains(output, `"ok": true`) || !strings.Contains(output, `"defaultValue": "Demo"`) || strings.Contains(output, "super-secret") {
+		t.Fatalf("preflight output = %q", output)
+	}
+}
+
+func TestSimulateUpgradeHonorsAdvancedOverrides(t *testing.T) {
+	workspace := validWorkspace(t)
+	manifestPath := filepath.Join(workspace, "manifest.yaml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest = bytes.Replace(manifest, []byte("dependencies: []\n"), []byte("dependencies: []\nsettings:\n  site-name: {label: Site, type: string, default: Demo}\n  token: {label: Token, type: secret, default: super-secret}\nmodels:\n  llm.0: {interface: openai.chat.completions}\n"), 1)
+	manifest = bytes.Replace(manifest, []byte("    lifecycle: {restart: unless-stopped}\n"), []byte("    lifecycle: {restart: unless-stopped}\n    environment:\n      SITE_NAME: {setting: site-name}\n      TOKEN: {setting: token}\n    capabilities:\n      model-gateway: {slots: [llm.0]}\n"), 1)
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := execute(t, "simulate", "upgrade", workspace, "--json", "--arch", "amd64", "--node-id", "42", "--model", "llm.0=qwen-plus", "--setting", "site-name=Custom", "--shared-bucket", "7")
+	if !strings.Contains(output, `"operation": "upgrade"`) ||
+		!strings.Contains(output, `"preserveExistingSettings": true`) ||
+		!strings.Contains(output, `"value": "42"`) ||
+		!strings.Contains(output, `"value": "qwen-plus"`) ||
+		!strings.Contains(output, `"value": "Custom"`) ||
+		!strings.Contains(output, `"value": "7"`) || strings.Contains(output, "super-secret") {
+		t.Fatalf("simulation output = %q", output)
+	}
+}
+
 // TestValidateReportsStableGateRule 验证 CLI 直接展示共享门禁的稳定规则编号。
 func TestValidateReportsStableGateRule(t *testing.T) {
 	workspace := validWorkspace(t)

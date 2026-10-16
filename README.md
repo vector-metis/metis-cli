@@ -1,6 +1,6 @@
 # Metis CLI
 
-Metis 应用开发 CLI，使用 Go 编写，用于初始化应用工作目录、打包 MPK、校验包和检查包元数据。
+Metis 应用开发 CLI，使用 Go 编写，用于初始化应用工作目录、打包 MPK、校验包、上传前预检、安装/升级模拟和检查包元数据。
 
 ## 安装
 
@@ -16,8 +16,14 @@ npm install -g @vector-metis/cli
 metis init [目录]
 metis pack <工作目录> --output <文件.mpk>
 metis validate <工作目录或文件.mpk>
+metis preflight <工作目录或文件.mpk> [--json]
+metis simulate install <工作目录或文件.mpk> [选项]
+metis simulate upgrade <工作目录或文件.mpk> [选项]
 metis inspect <工作目录或文件.mpk>
 ```
+
+`preflight` 在上传完整包前复用 MPK 门禁，`--json` 适合 CI。`simulate` 展示架构、节点、模型和共享存储的自动选择；可用
+`--node-id`、`--model slot=model`、`--setting key=value` 和 `--shared-bucket` 做高级覆盖。secret 默认值只显示为已设置或脱敏值。
 
 ## Manifest 挂载与 Overlay
 
